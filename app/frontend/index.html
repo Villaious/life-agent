@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>本地生活 Agent 工作台</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar" aria-label="工作台状态">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">LA</span>
+          <div>
+            <h1>本地生活 Agent 工作台</h1>
+            <p>预约任务编排与接口联调</p>
+          </div>
+        </div>
+        <div class="service-state">
+          <span class="dot"></span>
+          <span>Dry-run 接口</span>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <form class="booking-panel" id="booking-form">
+          <div class="panel-head">
+            <div>
+              <h2>预约请求</h2>
+              <p>提交自然语言任务和必要上下文</p>
+            </div>
+            <button class="icon-button" id="reset-button" type="button" title="重置表单">
+              ↺
+            </button>
+          </div>
+
+          <label class="field">
+            <span>用户 ID</span>
+            <input id="user-id" name="user_id" value="user_001" autocomplete="off" />
+          </label>
+
+          <label class="field">
+            <span>会话 ID</span>
+            <input id="session-id" name="session_id" placeholder="可选" autocomplete="off" />
+          </label>
+
+          <label class="field">
+            <span>预约内容</span>
+            <textarea id="message" name="message" rows="5">帮我预约保洁</textarea>
+          </label>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>地点</span>
+              <input id="location" name="location" value="深圳南山" autocomplete="off" />
+            </label>
+
+            <label class="field">
+              <span>时间偏好</span>
+              <input id="time-preference" name="time_preference" value="明天下午" autocomplete="off" />
+            </label>
+          </div>
+
+          <fieldset class="permission-group">
+            <legend>工具权限</legend>
+            <label><input type="checkbox" name="permission" value="booking:match" checked /> 服务匹配</label>
+            <label><input type="checkbox" name="permission" value="booking:slot" checked /> 时间确认</label>
+            <label><input type="checkbox" name="permission" value="booking:order" checked /> 订单草单</label>
+          </fieldset>
+
+          <div class="actions">
+            <button class="primary-button" id="submit-button" type="submit">提交预约</button>
+            <button class="secondary-button" id="missing-demo-button" type="button">缺失信息样例</button>
+          </div>
+        </form>
+
+        <section class="result-panel" aria-live="polite">
+          <div class="panel-head">
+            <div>
+              <h2>Agent 结果</h2>
+              <p id="result-subtitle">等待提交</p>
+            </div>
+            <span class="status-badge idle" id="status-badge">idle</span>
+          </div>
+
+          <ol class="timeline" id="timeline">
+            <li data-step="intent"><span></span>意图理解</li>
+            <li data-step="match"><span></span>服务匹配</li>
+            <li data-step="slot"><span></span>时间确认</li>
+            <li data-step="order"><span></span>订单草单</li>
+          </ol>
+
+          <div class="reply-box">
+            <h3>回复</h3>
+            <p id="reply-text">提交后显示 Agent 回复。</p>
+          </div>
+
+          <div class="data-grid">
+            <section>
+              <h3>缺失字段</h3>
+              <div class="tag-list" id="missing-fields"></div>
+            </section>
+
+            <section>
+              <h3>候选服务</h3>
+              <div class="candidate-list" id="candidate-list"></div>
+            </section>
+          </div>
+
+          <section class="raw-section">
+            <div class="section-title">
+              <h3>响应数据</h3>
+              <button class="icon-button" id="copy-button" type="button" title="复制响应">⧉</button>
+            </div>
+            <pre id="raw-json">{}</pre>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
