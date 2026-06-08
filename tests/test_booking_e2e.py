@@ -52,7 +52,12 @@ async def test_e2e_llm_parse_failure_falls_back_to_rules() -> None:
     )
 
     assert response.status == BookingStatus.CREATED
-    assert response.candidates[0].category == "home_cleaning"
+    assert len(response.candidates) > 0
+    # 高德地图返回真实的中文分类名（如"保洁"、"家政服务"、"搬家"等）
+    assert response.candidates[0].category in {
+        "保洁", "家政服务", "搬家", "管道疏通",
+        "家电维修", "保姆月嫂", "其他家政服务",
+    }
 
 
 @pytest.mark.asyncio

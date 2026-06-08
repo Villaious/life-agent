@@ -49,41 +49,69 @@
 
 ## 快速开始
 
-1. 复制环境变量：
+### 1. 环境准备
+
+确保已安装 Python 3.11+ 和 Docker Desktop。
+
+### 2. 创建虚拟环境并安装依赖
 
 ```bash
-cp .env.example .env
+# Windows PowerShell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
 ```
 
-2. 启动本地依赖：
+```bash
+# macOS / Linux
+python3 -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### 3. 复制环境变量
+
+```bash
+copy .env.example .env
+```
+
+根据需要编辑 `.env` 文件，填入 API Key 等配置（如 `AMAP_API_KEY`、`LLM_API_KEY`）。
+
+### 4. 启动本地依赖（PostgreSQL、Redis）
 
 ```bash
 docker compose up -d postgres redis
 ```
 
-3. 安装依赖并启动 API：
+### 5. 执行数据库迁移
 
 ```bash
-pip install -e ".[dev]"
-uvicorn app.main:app --reload
+# 确保虚拟环境已激活
+alembic upgrade head
 ```
 
-4. 访问接口文档：
+### 6. 启动 API 服务
+
+```bash
+# 方式一：通过 python -m 启动（推荐，无需激活虚拟环境）
+python -m uvicorn app.main:app --reload
+
+# 方式二：激活虚拟环境后直接运行
+# .\venv\Scripts\Activate.ps1    # Windows
+# source venv/bin/activate        # macOS/Linux
+# uvicorn app.main:app --reload
+```
+
+### 7. 访问接口文档
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
-5. 访问前端工作台：
+### 8. 访问前端工作台
 
 ```text
 http://127.0.0.1:8000/
-```
-
-6. 执行数据库迁移：
-
-```bash
-alembic upgrade head
 ```
 
 ## 前端工作台
@@ -103,6 +131,8 @@ alembic upgrade head
 - 填写地点、时间偏好和会话 ID。
 - 勾选或取消工具权限，验证权限拒绝路径。
 - 展示 Agent 状态、缺失字段、候选服务商和原始响应 JSON。
+- 展示候选服务商价格、履约时长和库存锁状态。
+- 权限不足时显示权限缺失提示。
 - 一键填充缺失信息样例，方便测试 `needs_info` 路径。
 
 前端调用的后端接口：
@@ -149,6 +179,8 @@ Content-Type: application/json
 ```bash
 LOCAL_LIFE_API_BASE_URL=https://your-local-life-service.example.com
 LOCAL_LIFE_API_KEY=your_service_api_key
+LOCAL_LIFE_SANDBOX_BASE_URL=https://sandbox-local-life.example.com
+LOCAL_LIFE_SANDBOX_API_KEY=your_sandbox_key
 LOCAL_LIFE_TIMEOUT=15
 LOCAL_LIFE_DRY_RUN=false
 ```
@@ -309,6 +341,20 @@ Content-Type: application/json
 - 如果真实服务响应字段不同，优先只修改 `LocalLifeServiceClient` 的解析逻辑，不要把接口细节散落到 Agent 节点里。
 - 如果新增支付、取消、改期、评价等动作，先新增 `BaseTool`，再挂到 `BookingAgent` 的 LangGraph 节点中。
 
+### 沙箱 Contract Tests
+
+[tests/test_local_life_contract.py](D:/ZERO/Auser/本地生活agent/tests/test_local_life_contract.py) 提供真实服务商沙箱 contract tests。默认跳过；配置 `LOCAL_LIFE_SANDBOX_BASE_URL` 后会调用沙箱接口验证：
+
+- 服务匹配响应可归一化为 `ServiceCandidate`。
+- 时间确认响应可归一化为 `AppointmentSlot`。
+- 订单草单响应可归一化为 `DraftOrder`。
+
+运行：
+
+```bash
+pytest -m contract
+```
+
 ### 字段归一化
 
 真实接口字段在 [app/integrations/local_life_client.py](D:/ZERO/Auser/本地生活agent/app/integrations/local_life_client.py) 中归一化到 [app/models/booking.py](D:/ZERO/Auser/本地生活agent/app/models/booking.py)：
@@ -334,6 +380,7 @@ Content-Type: application/json
 - `booking_tasks`：保存预约任务状态、意图、缺失字段、最终响应。
 - `booking_orders`：保存订单草单快照、价格、服务商、时间和库存锁。
 - `tool_audit_logs`：保存工具调用审计、权限集合、隐私范围、请求/响应和错误。
+- `session_checkpoints`：保存多轮会话 checkpoint。
 
 常用命令：
 
@@ -343,6 +390,30 @@ alembic revision --autogenerate -m "describe change"
 ```
 
 数据库写入辅助函数位于 [app/db/repositories.py](D:/ZERO/Auser/本地生活agent/app/db/repositories.py)。当前 Agent 先在状态中积累 `audit_events`，后续接入事务型持久化时优先复用这些 repository 函数。
+
+### 事务持久化
+
+[app/services/persistence.py](D:/ZERO/Auser/本地生活agent/app/services/persistence.py) 提供 `BookingPersistenceService`。当 `BOOKING_PERSISTENCE_ENABLED=true` 时，Agent 会在图执行结束后用同一个数据库事务写入：
+
+- `booking_tasks`
+- `booking_orders`
+- `tool_audit_logs`
+
+这样可以保证订单草单和工具审计一致落库。开发环境默认关闭，避免没有 PostgreSQL 时影响本地调试。
+
+## 会话 Checkpoint
+
+[app/memory/checkpoint.py](D:/ZERO/Auser/本地生活agent/app/memory/checkpoint.py) 提供 `SessionCheckpointStore`，用于多轮预约恢复上下文。
+
+支持后端：
+
+| Backend | 配置 | 说明 |
+| --- | --- | --- |
+| memory | `SESSION_CHECKPOINT_BACKEND=memory` | 本地开发默认，进程内保存 |
+| redis | `SESSION_CHECKPOINT_BACKEND=redis` | 使用 `REDIS_URL` 保存，支持 TTL |
+| postgres | `SESSION_CHECKPOINT_BACKEND=postgres` | 写入 `session_checkpoints` 表 |
+
+当前会保存上一轮意图、缺失字段、当前步骤和响应。下一轮同一 `user_id + session_id` 请求会自动合并已知地点和时间偏好。
 
 ## LLM Provider 配置
 
@@ -429,6 +500,10 @@ flowchart LR
 - `ServiceMatchTool`：调用 `POST /services/match` 获取服务商候选。
 - `SlotConfirmTool`：调用 `POST /availability/confirm` 获取候选预约时间。
 - `OrderDraftTool`：调用 `POST /orders/drafts` 创建预约草单。
+- `PaymentTool`：调用 `POST /orders/payments` 创建支付请求。
+- `RescheduleTool`：调用 `POST /orders/reschedule` 改期。
+- `CancelOrderTool`：调用 `POST /orders/cancel` 取消订单。
+- `ReviewOrderTool`：调用 `POST /orders/reviews` 提交评价。
 
 ### 权限控制
 
@@ -468,6 +543,10 @@ order:write
 | `ServiceMatchTool` | `booking:match`, `external_api:local_life`, `privacy:user_context` |
 | `SlotConfirmTool` | `booking:slot`, `external_api:local_life`, `privacy:user_context` |
 | `OrderDraftTool` | `booking:order`, `external_api:local_life`, `order:write` |
+| `PaymentTool` | `payment:write`, `external_api:local_life`, `order:read` |
+| `RescheduleTool` | `order:reschedule`, `external_api:local_life`, `privacy:user_context` |
+| `CancelOrderTool` | `order:cancel`, `external_api:local_life`, `order:read` |
+| `ReviewOrderTool` | `order:review`, `external_api:local_life`, `privacy:user_context` |
 
 ### 失败处理
 
@@ -526,6 +605,8 @@ response = await agent.run(
 - LLM 解析失败时回退本地规则。
 - 本地生活接口超时时进入失败响应，不创建订单。
 - 真实服务商字段映射到价格、服务范围、履约时长、库存锁。
+- 支付、改期、取消、评价动作节点返回 `completed`。
+- 会话 checkpoint 能从上一轮恢复缺失上下文。
 
 ## Skills
 
@@ -556,8 +637,8 @@ LLM 期望返回：
 
 ## 后续开发建议
 
-1. 将 `audit_events` 和订单草单写入数据库事务，保证工具调用和状态持久化一致。
-2. 为前端补充价格、履约时长、库存锁倒计时和权限缺失提示。
-3. 接入真实服务商沙箱环境，补充 contract tests。
-4. 增加支付、改期、取消、评价等后续订单节点。
-5. 为多轮会话接入 Redis 或 PostgreSQL session checkpoint。
+1. 将前端订单动作入口接到 `action=payment/reschedule/cancel/review`。
+2. 为真实服务商 contract tests 补充失败码、鉴权失败和库存锁过期场景。
+3. 将 LangGraph checkpoint 替换为官方持久化 checkpointer 或接入更完整的会话状态表。
+4. 为订单动作写入独立订单事件表，支持审计回放。
+5. 增加前端库存锁实时倒计时刷新和锁过期后的重新确认操作。

@@ -4,31 +4,59 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from app.core.agent import BaseAgent
-from app.models.booking import BookingRequest, BookingResponse, BookingStatus
+from app.memory.checkpoint import SessionCheckpointStore
+from app.models.booking import BookingRequest, BookingResponse, BookingStatus, DraftOrder, OrderActionResult
 from app.models.state import BookingGraphState
+from app.services.persistence import BookingPersistenceService
 from app.tools.base import BaseTool
-from app.tools.builtin.booking_tools import OrderDraftTool, ServiceMatchTool, SlotConfirmTool
+from app.tools.builtin.booking_tools import (
+    CancelOrderTool,
+    OrderDraftTool,
+    PaymentTool,
+    RescheduleTool,
+    ReviewOrderTool,
+    ServiceMatchTool,
+    SlotConfirmTool,
+)
 from app.tools.policy import ToolContext, ToolPolicy
 from app.tools.sandbox import ToolSandbox
 
 
 class BookingAgent(BaseAgent):
-    def __init__(self, tools: list[BaseTool] | None = None) -> None:
+    def __init__(
+        self,
+        tools: list[BaseTool] | None = None,
+        persistence: BookingPersistenceService | None = None,
+        checkpoint_store: SessionCheckpointStore | None = None,
+    ) -> None:
         super().__init__(
             name="本地生活预约Agent",
             system_prompt=(
                 "你是本地生活服务预约助手，负责理解用户需求、补全信息、匹配服务、"
                 "确认时间并生成预约草单。"
             ),
-            tools=tools or [ServiceMatchTool(), SlotConfirmTool(), OrderDraftTool()],
+            tools=tools
+            or [
+                ServiceMatchTool(),
+                SlotConfirmTool(),
+                OrderDraftTool(),
+                PaymentTool(),
+                RescheduleTool(),
+                CancelOrderTool(),
+                ReviewOrderTool(),
+            ],
         )
         self.sandbox = ToolSandbox(self.tools, ToolPolicy())
+        self.persistence = persistence or BookingPersistenceService()
+        self.checkpoint_store = checkpoint_store or SessionCheckpointStore()
         self.graph = self._build_graph()
 
     async def run(self, user_input: str, **kwargs: object) -> BookingResponse:
         request = kwargs.get("request")
         if not isinstance(request, BookingRequest):
             request = BookingRequest(user_id="anonymous", message=user_input)
+        checkpoint = await self.checkpoint_store.load(request)
+        request = self.checkpoint_store.merge_request_context(request, checkpoint)
 
         initial_state: BookingGraphState = {
             "request": request,
@@ -36,7 +64,10 @@ class BookingAgent(BaseAgent):
             "audit_events": [],
         }
         final_state = await self.graph.ainvoke(initial_state)
-        return final_state["response"]
+        response = final_state["response"]
+        await self.persistence.save_final_state(final_state, response)
+        await self.checkpoint_store.save(final_state)
+        return response
 
     def _build_graph(self):
         graph = StateGraph(BookingGraphState)
@@ -45,10 +76,27 @@ class BookingAgent(BaseAgent):
         graph.add_node("match_service", self._match_service_node)
         graph.add_node("confirm_slot", self._confirm_slot_node)
         graph.add_node("create_order", self._create_order_node)
+        graph.add_node("create_payment", self._create_payment_node)
+        graph.add_node("reschedule_order", self._reschedule_order_node)
+        graph.add_node("cancel_order", self._cancel_order_node)
+        graph.add_node("review_order", self._review_order_node)
+        graph.add_node("build_action_response", self._build_action_response_node)
         graph.add_node("build_success_response", self._build_success_response_node)
         graph.add_node("build_tool_error_response", self._build_tool_error_response_node)
 
-        graph.set_entry_point("understand_intent")
+        graph.add_node("route_request", self._route_request_node)
+        graph.set_entry_point("route_request")
+        graph.add_conditional_edges(
+            "route_request",
+            self._route_after_request,
+            {
+                "booking": "understand_intent",
+                "payment": "create_payment",
+                "reschedule": "reschedule_order",
+                "cancel": "cancel_order",
+                "review": "review_order",
+            },
+        )
         graph.add_conditional_edges(
             "understand_intent",
             self._route_after_intent,
@@ -73,9 +121,25 @@ class BookingAgent(BaseAgent):
             self._route_after_tool,
             {"failed": "build_tool_error_response", "continue": "build_success_response"},
         )
+        for node_name in ["create_payment", "reschedule_order", "cancel_order", "review_order"]:
+            graph.add_conditional_edges(
+                node_name,
+                self._route_after_tool,
+                {"failed": "build_tool_error_response", "continue": "build_action_response"},
+            )
         graph.add_edge("build_tool_error_response", END)
+        graph.add_edge("build_action_response", END)
         graph.add_edge("build_success_response", END)
         return graph.compile()
+
+    async def _route_request_node(self, state: BookingGraphState) -> BookingGraphState:
+        action = str(state["request"].context.get("action", "booking"))
+        allowed_actions = {"payment", "reschedule", "cancel", "review"}
+        return {
+            **state,
+            "current_step": "route_request",
+            "action": action if action in allowed_actions else "booking",
+        }
 
     async def _understand_intent_node(self, state: BookingGraphState) -> BookingGraphState:
         request = state["request"]
@@ -176,16 +240,41 @@ class BookingAgent(BaseAgent):
             ),
         }
 
+    async def _create_payment_node(self, state: BookingGraphState) -> BookingGraphState:
+        return await self._run_order_action_node(state, "create_payment", "payment_create")
+
+    async def _reschedule_order_node(self, state: BookingGraphState) -> BookingGraphState:
+        return await self._run_order_action_node(state, "reschedule_order", "order_reschedule")
+
+    async def _cancel_order_node(self, state: BookingGraphState) -> BookingGraphState:
+        return await self._run_order_action_node(state, "cancel_order", "order_cancel")
+
+    async def _review_order_node(self, state: BookingGraphState) -> BookingGraphState:
+        return await self._run_order_action_node(state, "review_order", "order_review")
+
     async def _build_success_response_node(self, state: BookingGraphState) -> BookingGraphState:
-        order = state.get("order", {})
+        order = DraftOrder.model_validate(state["order"])
         return {
             **state,
             "current_step": "build_success_response",
             "response": BookingResponse(
                 status=BookingStatus.CREATED,
                 reply="已为你生成预约草单，请确认服务、时间和地址信息。",
-                task_id=order.get("task_id"),
+                task_id=order.task_id,
                 candidates=state.get("service_candidates", []),
+            ),
+        }
+
+    async def _build_action_response_node(self, state: BookingGraphState) -> BookingGraphState:
+        action_result = OrderActionResult.model_validate(state["action_result"])
+        return {
+            **state,
+            "current_step": "build_action_response",
+            "response": BookingResponse(
+                status=BookingStatus.COMPLETED,
+                reply=f"订单动作已受理：{action_result.action}",
+                task_id=action_result.task_id,
+                action_result=action_result,
             ),
         }
 
@@ -208,6 +297,9 @@ class BookingAgent(BaseAgent):
 
     def _route_after_intent(self, state: BookingGraphState) -> str:
         return "needs_info" if state.get("missing_fields") else "continue"
+
+    def _route_after_request(self, state: BookingGraphState) -> str:
+        return state.get("action", "booking")
 
     def _route_after_tool(self, state: BookingGraphState) -> str:
         return "failed" if state.get("tool_error") else "continue"
@@ -271,6 +363,11 @@ class BookingAgent(BaseAgent):
                 "external_api:local_life",
                 "privacy:user_context",
                 "order:write",
+                "order:read",
+                "payment:write",
+                "order:reschedule",
+                "order:cancel",
+                "order:review",
             }
         elif isinstance(raw_permissions, list):
             permissions = {str(permission) for permission in raw_permissions}
@@ -298,6 +395,39 @@ class BookingAgent(BaseAgent):
         if key not in data:
             return {"ok": False, "error": "invalid_tool_result", "tool": name}
         return {"ok": True, "data": data[key], "tool": name}
+
+    async def _run_order_action_node(
+        self,
+        state: BookingGraphState,
+        step: str,
+        tool_name: str,
+    ) -> BookingGraphState:
+        request = state["request"]
+        payload = {
+            "task_id": request.context.get("task_id") or request.context.get("order_id"),
+            "order_id": request.context.get("order_id"),
+            "payment_method": request.context.get("payment_method"),
+            "new_time_preference": request.context.get("new_time_preference"),
+            "reason": request.context.get("reason"),
+            "rating": request.context.get("rating"),
+            "comment": request.context.get("comment"),
+        }
+        payload = {key: value for key, value in payload.items() if value is not None}
+        result = await self._run_tool(state, tool_name, payload, "action_result")
+        if not result["ok"]:
+            return self._with_tool_error(state, step, result)
+        return {
+            **state,
+            "current_step": step,
+            "action_result": result["data"],
+            "audit_events": self._append_audit_event(
+                state,
+                tool_name,
+                "ok",
+                request_payload=payload,
+                response_payload={"action_result": result["data"]},
+            ),
+        }
 
     def _with_tool_error(
         self,

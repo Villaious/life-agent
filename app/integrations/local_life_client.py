@@ -10,6 +10,7 @@ from app.models.booking import (
     FulfillmentInfo,
     InventoryLock,
     PriceInfo,
+    OrderActionResult,
     ServiceArea,
     ServiceCandidate,
 )
@@ -28,6 +29,14 @@ class LocalLifeServiceClient:
         self.timeout = timeout if timeout is not None else settings.local_life_timeout
         self.dry_run = settings.local_life_dry_run if dry_run is None else dry_run
 
+    @classmethod
+    def sandbox(cls) -> "LocalLifeServiceClient":
+        return cls(
+            base_url=settings.local_life_sandbox_base_url,
+            api_key=settings.local_life_sandbox_api_key,
+            dry_run=False,
+        )
+
     async def match_services(self, payload: dict[str, Any]) -> list[ServiceCandidate]:
         if self._should_dry_run:
             return [
@@ -36,6 +45,7 @@ class LocalLifeServiceClient:
                     name="开发模式服务商",
                     category=payload.get("service_category", "unknown"),
                     location=payload.get("location"),
+                    phone="0755-88886666",
                     score=0.82,
                     price=PriceInfo(amount=168, currency="CNY", unit="次", display_text="¥168/次"),
                     service_area=ServiceArea(city="深圳", district="南山", address_hint=payload.get("location")),
@@ -98,6 +108,18 @@ class LocalLifeServiceClient:
             raise ValueError("Local life API returned invalid order.")
         return self._normalize_order(order)
 
+    async def create_payment(self, payload: dict[str, Any]) -> OrderActionResult:
+        return await self._order_action("payment", "/orders/payments", payload)
+
+    async def reschedule_order(self, payload: dict[str, Any]) -> OrderActionResult:
+        return await self._order_action("reschedule", "/orders/reschedule", payload)
+
+    async def cancel_order(self, payload: dict[str, Any]) -> OrderActionResult:
+        return await self._order_action("cancel", "/orders/cancel", payload)
+
+    async def review_order(self, payload: dict[str, Any]) -> OrderActionResult:
+        return await self._order_action("review", "/orders/reviews", payload)
+
     @property
     def _should_dry_run(self) -> bool:
         return self.dry_run or not self.base_url
@@ -110,7 +132,7 @@ class LocalLifeServiceClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f"{self.base_url}{path}",
-                json=payload,
+                json=self._jsonable(payload),
                 headers=headers,
             )
             response.raise_for_status()
@@ -126,6 +148,11 @@ class LocalLifeServiceClient:
             name=str(raw.get("name") or raw.get("provider_name")),
             category=str(raw.get("category", "unknown")),
             location=raw.get("location"),
+            phone=raw.get("phone")
+            or raw.get("tel")
+            or raw.get("telephone")
+            or raw.get("provider_phone")
+            or raw.get("contact_phone"),
             score=raw.get("score"),
             price=PriceInfo(
                 amount=price_raw.get("amount") or raw.get("price_amount"),
@@ -188,6 +215,30 @@ class LocalLifeServiceClient:
             raw=raw,
         )
 
+    async def _order_action(
+        self,
+        action: str,
+        path: str,
+        payload: dict[str, Any],
+    ) -> OrderActionResult:
+        task_id = str(payload.get("task_id") or payload.get("order_id") or "")
+        if self._should_dry_run:
+            return OrderActionResult(
+                action=action,
+                task_id=task_id or f"task_{uuid4().hex[:12]}",
+                status=f"{action}_accepted",
+                raw={"source": "dry_run", **payload},
+            )
+
+        data = await self._post(path, payload)
+        result = data.get("result", data)
+        return OrderActionResult(
+            action=action,
+            task_id=str(result.get("task_id") or result.get("order_id") or task_id),
+            status=str(result.get("status") or f"{action}_accepted"),
+            raw=result,
+        )
+
     def _dump_model(self, value: Any) -> dict[str, Any] | None:
         if value is None:
             return None
@@ -196,3 +247,12 @@ class LocalLifeServiceClient:
         if isinstance(value, dict):
             return value
         return {"value": value}
+
+    def _jsonable(self, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, list):
+            return [self._jsonable(item) for item in value]
+        if isinstance(value, dict):
+            return {key: self._jsonable(item) for key, item in value.items()}
+        return value

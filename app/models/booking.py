@@ -1,4 +1,5 @@
 from enum import StrEnum
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ class BookingStatus(StrEnum):
     WAITING_CONFIRMATION = "waiting_confirmation"
     CREATED = "created"
     FAILED = "failed"
+    COMPLETED = "completed"
 
 
 class BookingRequest(BaseModel):
@@ -51,6 +53,7 @@ class ServiceCandidate(BaseModel):
     name: str
     category: str = "unknown"
     location: str | None = None
+    phone: str | None = None
     score: float | None = None
     price: PriceInfo = Field(default_factory=PriceInfo)
     service_area: ServiceArea = Field(default_factory=ServiceArea)
@@ -78,9 +81,36 @@ class DraftOrder(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class OrderActionResult(BaseModel):
+    action: str
+    task_id: str
+    status: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
 class BookingResponse(BaseModel):
     status: BookingStatus
     reply: str
     task_id: str | None = None
     missing_fields: list[str] = Field(default_factory=list)
     candidates: list[ServiceCandidate] = Field(default_factory=list)
+    action_result: OrderActionResult | None = None
+
+
+class BookingOrderView(BaseModel):
+    task_id: str
+    user_id: str
+    session_id: str | None = None
+    status: str
+    provider_id: str | None = None
+    price: dict[str, Any] | None = None
+    slot: dict[str, Any] | None = None
+    provider: dict[str, Any] | None = None
+    inventory_lock: dict[str, Any] | None = None
+    raw_payload: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BookingOrderQueryResponse(BaseModel):
+    orders: list[BookingOrderView] = Field(default_factory=list)

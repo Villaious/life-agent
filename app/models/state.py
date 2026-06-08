@@ -1,6 +1,13 @@
 from typing import Any, TypedDict
 
-from app.models.booking import AppointmentSlot, BookingRequest, BookingResponse, DraftOrder, ServiceCandidate
+from app.models.booking import (
+    AppointmentSlot,
+    BookingRequest,
+    BookingResponse,
+    DraftOrder,
+    OrderActionResult,
+    ServiceCandidate,
+)
 from app.tools.policy import ToolContext
 
 
@@ -12,6 +19,8 @@ class BookingGraphState(TypedDict, total=False):
     service_candidates: list[ServiceCandidate]
     selected_slot: AppointmentSlot
     order: DraftOrder
+    action: str
+    action_result: OrderActionResult
     current_step: str
     tool_error: dict[str, Any]
     audit_events: list[dict[str, Any]]

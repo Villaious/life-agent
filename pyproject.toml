@@ -30,3 +30,6 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "contract: tests that call a configured local-life provider sandbox",
+]
