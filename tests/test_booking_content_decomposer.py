@@ -59,13 +59,13 @@ async def test_booking_agent_uses_decomposer_without_context_fields() -> None:
     )
 
     response = await agent.run(
-        "帮我预约明天下午深圳南山的上门保洁",
-        request=BookingRequest(user_id="user_001", message="帮我预约明天下午深圳南山的上门保洁"),
+        "帮我预约明天下午太原科技大学的上门保洁",
+        request=BookingRequest(user_id="user_001", message="帮我预约明天下午太原科技大学的上门保洁"),
     )
 
     assert response.status == BookingStatus.CREATED
     assert response.task_id is not None
     assert response.parsed_intent is not None
     assert response.parsed_intent["event"] == "上门保洁"
-    assert response.parsed_intent["location"] == "深圳南山"
+    assert response.parsed_intent["location"] == "太原科技大学"
     assert response.parsed_intent["time_preference"]

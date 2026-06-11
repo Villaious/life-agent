@@ -4,6 +4,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from app.agents.booking_content_decomposer import BookingContentDecomposerAgent
+from app.agents.housekeeping_scoring_agent import HousekeepingScoringAgent
 from app.core.agent import BaseAgent
 from app.memory.checkpoint import SessionCheckpointStore
 from app.models.booking import BookingRequest, BookingResponse, BookingStatus, DraftOrder, OrderActionResult
@@ -51,6 +52,7 @@ class BookingAgent(BaseAgent):
         self.persistence = persistence or BookingPersistenceService()
         self.checkpoint_store = checkpoint_store or SessionCheckpointStore()
         self.content_decomposer = BookingContentDecomposerAgent()
+        self.housekeeping_scorer = HousekeepingScoringAgent()
         self.graph = self._build_graph()
 
     async def run(self, user_input: str, **kwargs: object) -> BookingResponse:
@@ -73,9 +75,11 @@ class BookingAgent(BaseAgent):
 
     def _build_graph(self):
         graph = StateGraph(BookingGraphState)
+        graph.add_node("route_request", self._route_request_node)
         graph.add_node("understand_intent", self._understand_intent_node)
         graph.add_node("build_missing_info_response", self._build_missing_info_response_node)
         graph.add_node("match_service", self._match_service_node)
+        graph.add_node("score_housekeeping_service", self._score_housekeeping_service_node)
         graph.add_node("confirm_slot", self._confirm_slot_node)
         graph.add_node("create_order", self._create_order_node)
         graph.add_node("create_payment", self._create_payment_node)
@@ -86,7 +90,6 @@ class BookingAgent(BaseAgent):
         graph.add_node("build_success_response", self._build_success_response_node)
         graph.add_node("build_tool_error_response", self._build_tool_error_response_node)
 
-        graph.add_node("route_request", self._route_request_node)
         graph.set_entry_point("route_request")
         graph.add_conditional_edges(
             "route_request",
@@ -110,6 +113,11 @@ class BookingAgent(BaseAgent):
         graph.add_edge("build_missing_info_response", END)
         graph.add_conditional_edges(
             "match_service",
+            self._route_after_tool,
+            {"failed": "build_tool_error_response", "continue": "score_housekeeping_service"},
+        )
+        graph.add_conditional_edges(
+            "score_housekeeping_service",
             self._route_after_tool,
             {"failed": "build_tool_error_response", "continue": "confirm_slot"},
         )
@@ -157,14 +165,18 @@ class BookingAgent(BaseAgent):
     async def _build_missing_info_response_node(
         self, state: BookingGraphState
     ) -> BookingGraphState:
+        missing_fields = state.get("missing_fields", [])
+        reply = "我还需要补充一些信息，才能继续为你预约。"
+        if "address_detail" in missing_fields:
+            reply = "请重新输入更精确的上门地址，例如小区、学校、大厦、街道门牌或楼栋信息。"
         return {
             **state,
             "current_step": "build_missing_info_response",
             "response": BookingResponse(
                 status=BookingStatus.NEEDS_INFO,
-                reply="我还需要补充一些信息，才能继续为你预约。",
+                reply=reply,
                 parsed_intent=state.get("intent"),
-                missing_fields=state.get("missing_fields", []),
+                missing_fields=missing_fields,
             ),
         }
 
@@ -194,6 +206,43 @@ class BookingAgent(BaseAgent):
                     "location": intent["location"],
                 },
                 response_payload={"candidates": result["data"]},
+            ),
+        }
+
+    async def _score_housekeeping_service_node(self, state: BookingGraphState) -> BookingGraphState:
+        intent = state["intent"]
+        candidates = state.get("service_candidates", [])
+        selected = self.housekeeping_scorer.select_best(
+            candidates,
+            str(intent.get("service_category", "unknown")),
+        )
+        if not selected:
+            return self._with_tool_error(
+                state,
+                "score_housekeeping_service",
+                {
+                    "ok": False,
+                    "tool": "housekeeping_scoring_agent",
+                    "error": "no_matching_service",
+                },
+            )
+        return {
+            **state,
+            "current_step": "score_housekeeping_service",
+            "service_candidates": selected,
+            "audit_events": self._append_audit_event(
+                state,
+                "housekeeping_scoring_agent",
+                "ok",
+                request_payload={
+                    "service_category": intent.get("service_category"),
+                    "candidate_count": len(candidates),
+                },
+                response_payload={
+                    "selected_provider_id": selected[0].provider_id,
+                    "expected_score": selected[0].expected_score,
+                    "candidate_count": len(selected),
+                },
             ),
         }
 
@@ -262,7 +311,7 @@ class BookingAgent(BaseAgent):
             "current_step": "build_success_response",
             "response": BookingResponse(
                 status=BookingStatus.CREATED,
-                reply="已为你生成预约草单，请确认服务、时间和地址信息。",
+                reply="已为你生成预约草单，并优先选择了预期评分最高的家政服务。",
                 task_id=order.task_id,
                 parsed_intent=state.get("intent"),
                 candidates=state.get("service_candidates", []),
@@ -288,6 +337,8 @@ class BookingAgent(BaseAgent):
         reply = "预约服务暂时不可用，请稍后再试。"
         if error_code == "permission_denied":
             reply = "当前任务缺少调用该服务能力的权限，请确认授权后再继续。"
+        if error_code == "no_matching_service":
+            reply = "没有找到与需求一致的家政清洁服务，请换一个更精确的地址或服务描述后再试。"
 
         return {
             **state,
@@ -316,8 +367,8 @@ class BookingAgent(BaseAgent):
 
         prompt = (
             "请从本地生活预约请求中抽取结构化意图，只返回 JSON。"
-            "字段包括 raw_text、service_category、location、time_preference。"
-            "service_category 可取 home_cleaning、repair、beauty、unknown。"
+            "字段包括 raw_text、service_category、location、time_preference、event。"
+            "service_category 可取 home_cleaning、repair、beauty、moving、unknown。"
             f"\n用户请求：{request.message}"
             f"\n已知上下文：{json.dumps(request.context, ensure_ascii=False)}"
         )
@@ -341,18 +392,46 @@ class BookingAgent(BaseAgent):
             missing_fields.append("service_intent")
         if not intent["location"]:
             missing_fields.append("location")
+        elif not self._is_precise_address(str(intent["location"])):
+            missing_fields.append("address_detail")
         if not intent["time_preference"]:
             missing_fields.append("time_preference")
         return missing_fields
 
-    def _guess_category(self, text: str) -> str:
-        if "保洁" in text or "打扫" in text:
-            return "home_cleaning"
-        if "维修" in text:
-            return "repair"
-        if "美甲" in text:
-            return "beauty"
-        return "unknown"
+    def _is_precise_address(self, location: str) -> bool:
+        location = location.strip()
+        if len(location) < 4:
+            return False
+        precise_terms = [
+            "大学",
+            "学院",
+            "学校",
+            "医院",
+            "小区",
+            "大厦",
+            "广场",
+            "商场",
+            "园区",
+            "科技园",
+            "机场",
+            "车站",
+            "火车站",
+            "高铁站",
+            "街道",
+            "路",
+            "街",
+            "巷",
+            "号",
+            "栋",
+            "座",
+            "单元",
+        ]
+        if any(term in location for term in precise_terms):
+            return True
+        if any(char.isdigit() for char in location):
+            return True
+        broad_suffixes = ("省", "市", "区", "县")
+        return not location.endswith(broad_suffixes) and len(location) >= 8
 
     def _build_tool_context(self, request: BookingRequest) -> ToolContext:
         raw_permissions = request.context.get("permissions")

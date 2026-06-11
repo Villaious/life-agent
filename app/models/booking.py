@@ -55,6 +55,8 @@ class ServiceCandidate(BaseModel):
     location: str | None = None
     phone: str | None = None
     score: float | None = None
+    expected_score: float | None = None
+    score_explanation: str | None = None
     price: PriceInfo = Field(default_factory=PriceInfo)
     service_area: ServiceArea = Field(default_factory=ServiceArea)
     fulfillment: FulfillmentInfo = Field(default_factory=FulfillmentInfo)

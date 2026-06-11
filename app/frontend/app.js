@@ -261,16 +261,30 @@ function renderCandidates(candidates) {
     const name = document.createElement("strong");
     const meta = document.createElement("p");
     const detail = document.createElement("p");
+    const scoreWrap = document.createElement("span");
     const score = document.createElement("span");
+    const scoreTip = document.createElement("span");
 
     name.textContent = candidate.name || candidate.provider_id || "未命名服务商";
     meta.textContent = `${candidate.category || "unknown"} · ${candidate.location || "地址待确认"}`;
     detail.textContent = `${formatPrice(candidate.price)} · ${formatPhone(candidate.phone)} · ${formatDuration(candidate.fulfillment)} · ${formatLock(candidate.inventory_lock)}`;
+    scoreWrap.className = "score-wrap";
+    scoreWrap.tabIndex = 0;
     score.className = "score";
-    score.textContent = typeof candidate.score === "number" ? candidate.score.toFixed(2) : "-";
+    const expectedScore =
+      typeof candidate.expected_score === "number" ? candidate.expected_score : candidate.score;
+    score.textContent = typeof expectedScore === "number" ? `${expectedScore.toFixed(0)}分` : "-";
+    if (candidate.score_explanation) {
+      scoreTip.className = "score-tip";
+      scoreTip.textContent = candidate.score_explanation;
+      scoreWrap.setAttribute("aria-label", candidate.score_explanation);
+      scoreWrap.append(score, scoreTip);
+    } else {
+      scoreWrap.append(score);
+    }
 
     main.append(name, meta, detail);
-    row.append(main, score);
+    row.append(main, scoreWrap);
     candidateList.append(row);
   });
 }

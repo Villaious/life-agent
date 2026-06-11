@@ -560,9 +560,58 @@ select:focus {
   line-height: 1.45;
 }
 
+.score-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: start;
+  min-width: 52px;
+  min-height: 30px;
+  outline: none;
+}
+
 .score {
   color: var(--blue);
   font-weight: 800;
+}
+
+.score-tip {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  right: 0;
+  display: none;
+  width: max-content;
+  max-width: min(280px, 70vw);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.score-tip::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: 14px;
+  width: 8px;
+  height: 8px;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  transform: rotate(45deg);
+}
+
+.score-wrap:hover .score-tip,
+.score-wrap:focus-visible .score-tip {
+  display: block;
 }
 
 .raw-section {

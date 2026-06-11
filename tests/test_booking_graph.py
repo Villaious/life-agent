@@ -24,7 +24,7 @@ async def test_booking_graph_creates_draft_order() -> None:
         BookingRequest(
             user_id="user_001",
             message="帮我预约保洁",
-            context={"location": "深圳南山", "time_preference": "明天下午"},
+            context={"location": "深圳南山科技园科兴科学园", "time_preference": "明天下午"},
         )
     )
 
@@ -52,7 +52,7 @@ async def test_booking_graph_handles_tool_failure() -> None:
         request=BookingRequest(
             user_id="user_001",
             message="帮我预约保洁",
-            context={"location": "深圳南山", "time_preference": "明天下午"},
+            context={"location": "深圳南山科技园科兴科学园", "time_preference": "明天下午"},
         ),
     )
 
@@ -67,7 +67,7 @@ async def test_booking_graph_rejects_missing_tool_permission() -> None:
             user_id="user_001",
             message="帮我预约保洁",
             context={
-                "location": "深圳南山",
+                "location": "深圳南山科技园科兴科学园",
                 "time_preference": "明天下午",
                 "permissions": ["booking:match", "booking:slot"],
             },
