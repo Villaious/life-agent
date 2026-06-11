@@ -29,7 +29,7 @@ const healthState = document.querySelector("#health-state");
 const defaultValues = {
   userId: "user_001",
   sessionId: "",
-  message: "帮我预约明天下午深圳南山的上门保洁",
+  message: "帮我预约明天下午太原科技大学的上门保洁",
   permissions: [
     "booking:match",
     "booking:slot",
