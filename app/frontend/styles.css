@@ -448,6 +448,7 @@ select:focus {
 }
 
 .reply-box,
+.intent-section,
 .raw-section,
 .data-grid section,
 .query-section {
@@ -457,6 +458,7 @@ select:focus {
 }
 
 .reply-box,
+.intent-section,
 .data-grid section {
   padding: 14px;
 }
@@ -474,6 +476,34 @@ select:focus {
   color: var(--red) !important;
   background: #fff0ee;
   font-weight: 700;
+}
+
+.intent-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.intent-grid article {
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.intent-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.intent-grid strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 .data-grid {
@@ -715,7 +745,8 @@ button:disabled {
 
 @media (max-width: 980px) {
   .workspace,
-  .data-grid {
+  .data-grid,
+  .intent-grid {
     grid-template-columns: 1fr;
   }
 }

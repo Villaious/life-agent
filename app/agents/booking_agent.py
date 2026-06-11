@@ -3,6 +3,7 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from app.agents.booking_content_decomposer import BookingContentDecomposerAgent
 from app.core.agent import BaseAgent
 from app.memory.checkpoint import SessionCheckpointStore
 from app.models.booking import BookingRequest, BookingResponse, BookingStatus, DraftOrder, OrderActionResult
@@ -49,6 +50,7 @@ class BookingAgent(BaseAgent):
         self.sandbox = ToolSandbox(self.tools, ToolPolicy())
         self.persistence = persistence or BookingPersistenceService()
         self.checkpoint_store = checkpoint_store or SessionCheckpointStore()
+        self.content_decomposer = BookingContentDecomposerAgent()
         self.graph = self._build_graph()
 
     async def run(self, user_input: str, **kwargs: object) -> BookingResponse:
@@ -161,6 +163,7 @@ class BookingAgent(BaseAgent):
             "response": BookingResponse(
                 status=BookingStatus.NEEDS_INFO,
                 reply="我还需要补充一些信息，才能继续为你预约。",
+                parsed_intent=state.get("intent"),
                 missing_fields=state.get("missing_fields", []),
             ),
         }
@@ -261,6 +264,7 @@ class BookingAgent(BaseAgent):
                 status=BookingStatus.CREATED,
                 reply="已为你生成预约草单，请确认服务、时间和地址信息。",
                 task_id=order.task_id,
+                parsed_intent=state.get("intent"),
                 candidates=state.get("service_candidates", []),
             ),
         }
@@ -291,6 +295,7 @@ class BookingAgent(BaseAgent):
             "response": BookingResponse(
                 status=BookingStatus.FAILED,
                 reply=reply,
+                parsed_intent=state.get("intent"),
                 candidates=state.get("service_candidates", []),
             ),
         }
@@ -305,12 +310,7 @@ class BookingAgent(BaseAgent):
         return "failed" if state.get("tool_error") else "continue"
 
     async def _understand_intent(self, request: BookingRequest) -> dict[str, Any]:
-        heuristic_intent = {
-            "raw_text": request.message,
-            "service_category": self._guess_category(request.message),
-            "location": request.context.get("location"),
-            "time_preference": request.context.get("time_preference"),
-        }
+        heuristic_intent = self.content_decomposer.decompose(request.message, request.context)
         if not self.llm.is_live:
             return heuristic_intent
 
@@ -332,6 +332,7 @@ class BookingAgent(BaseAgent):
             "service_category": parsed.get("service_category") or heuristic_intent["service_category"],
             "location": parsed.get("location") or heuristic_intent["location"],
             "time_preference": parsed.get("time_preference") or heuristic_intent["time_preference"],
+            "event": parsed.get("event") or heuristic_intent.get("event"),
         }
 
     def _find_missing_fields(self, intent: dict[str, Any]) -> list[str]:

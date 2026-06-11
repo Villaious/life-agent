@@ -92,6 +92,7 @@ class BookingResponse(BaseModel):
     status: BookingStatus
     reply: str
     task_id: str | None = None
+    parsed_intent: dict[str, Any] | None = None
     missing_fields: list[str] = Field(default_factory=list)
     candidates: list[ServiceCandidate] = Field(default_factory=list)
     action_result: OrderActionResult | None = None

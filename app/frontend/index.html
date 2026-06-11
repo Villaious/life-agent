@@ -75,19 +75,8 @@
 
             <label class="field">
               <span>预订内容</span>
-              <textarea id="message" name="message" rows="5">帮我预约明天下午的上门保洁</textarea>
+              <textarea id="message" name="message" rows="5">帮我预约明天下午深圳南山的上门保洁</textarea>
             </label>
-
-            <div class="field-grid">
-              <label class="field">
-                <span>地点</span>
-                <input id="location" name="location" value="深圳南山" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>时间偏好</span>
-                <input id="time-preference" name="time_preference" value="明天下午" autocomplete="off" />
-              </label>
-            </div>
 
             <fieldset class="permission-group">
               <legend>工具权限</legend>
@@ -126,6 +115,11 @@
               <p id="reply-text">提交后显示 Agent 回复。</p>
               <p class="permission-alert" id="permission-alert" hidden>当前请求缺少必要权限，请检查工具权限勾选。</p>
             </div>
+
+            <section class="intent-section">
+              <h3>预订拆解</h3>
+              <div class="intent-grid" id="parsed-intent"></div>
+            </section>
 
             <div class="data-grid">
               <section>
@@ -324,6 +318,6 @@
       </section>
     </main>
 
-    <script src="/assets/app.js"></script>
+    <script src="/assets/app.js?v=20260610-booking-decomposer-fix"></script>
   </body>
 </html>
